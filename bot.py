@@ -15,9 +15,15 @@ class Bot(commands.Bot):
         print(f'User id is | {self.user_id}')
         await self.fetch_new_quotes()
 
+    async def event_message(self, message):
+        await self.quote_manager.process_message(message)
+        # Only handle commands if the message has an author
+        if message.author:
+            await self.handle_commands(message)
+
     async def fetch_new_quotes(self):
         print("Checking for new quotes...")
-        await self.quote_manager.fetch_new_quotes(self, max_checks=100)  # You can adjust max_checks as needed
+        await self.quote_manager.fetch_new_quotes(self, max_checks=200)
         print("Finished checking for new quotes.")
 
     @commands.command(name='quote')
@@ -49,5 +55,12 @@ class Bot(commands.Bot):
         else:
             await ctx.send(f"No quotes found matching '{search_term}'.")
 
-bot = Bot()
-bot.run()
+    @commands.command(name='quotecount')
+    async def quote_count_command(self, ctx: commands.Context):
+        author = ctx.author.name
+        count = self.quote_manager.count_quotes_by_author(f'@{author}')
+        await ctx.send(f"@{author}, you have {count} quote(s) in the database.")
+
+if __name__ == "__main__":
+    bot = Bot()
+    bot.run()
