@@ -4,6 +4,9 @@ import aiohttp
 import config
 import asyncio
 from datetime import datetime, timedelta
+from utils.logger import bot_logger
+from functools import lru_cache
+import time
 
 class UserDataManager:
     def __init__(self, db):
@@ -13,6 +16,8 @@ class UserDataManager:
         self.token_expiry = datetime.now()
         self.ignored_users_file = 'ignored_users.txt'
         self.ignored_users = self.load_ignored_users()
+        self.cache = {}
+        self.cache_timeout = 300  # 5 minutes
 
     def load_ignored_users(self):
         ignored_users = set()
@@ -25,8 +30,9 @@ class UserDataManager:
         return ignored_users
 
     async def collect_chat_data(self, user_id, username, message_content, timestamp):
+        bot_logger.info(f"Collecting chat data for user: {username} (ID: {user_id})")
         if username.lstrip('@').lower() in self.ignored_users:
-            print(f"Ignoring message from {username} (ID: {user_id})")
+            bot_logger.info(f"Ignoring message from {username} (ID: {user_id})")
             return
 
         if isinstance(message_content, list):
@@ -76,9 +82,9 @@ class UserDataManager:
         )
 
         if result.modified_count > 0 or result.upserted_id:
-            print(f"Stored message for user {username} (ID: {user_id}): {message_content[:50]}...")
+            bot_logger.info(f"Stored message for user {username} (ID: {user_id}): {message_content[:50]}...")
         else:
-            print(f"Failed to store message for user {username} (ID: {user_id})")
+            bot_logger.warning(f"Failed to store message for user {username} (ID: {user_id})")
 
     async def fetch_user_profile(self, user_id, max_retries=3):
         for attempt in range(max_retries):
@@ -123,7 +129,14 @@ class UserDataManager:
         return {}
 
     async def get_user_info(self, user_id):
-        return await self.users_collection.find_one({'_id': user_id})
+        current_time = time.time()
+        if user_id in self.cache and current_time - self.cache[user_id]['timestamp'] < self.cache_timeout:
+            return self.cache[user_id]['data']
+
+        user_data = await self.users_collection.find_one({'_id': user_id})
+        if user_data:
+            self.cache[user_id] = {'data': user_data, 'timestamp': current_time}
+        return user_data
 
     def save_ignored_users(self):
         with open(self.ignored_users_file, 'w') as file:
@@ -179,12 +192,22 @@ class UserDataManager:
             return await quotes_collection.find({'_id': {'$in': user_data['quotes']}}).to_list(length=None)
         return []
 
+    @lru_cache(maxsize=100)
     async def generate_user_summary(self, user_id, channel_name):
+        bot_logger.info(f"Generating user summary for user ID: {user_id}")
+        
+        # Try to find the user by ID first
         user_data = await self.users_collection.find_one({'_id': user_id})
+        
+        # If not found, try to find by username
+        if not user_data:
+            bot_logger.info(f"User not found by ID, trying username: {user_id}")
+            user_data = await self.users_collection.find_one({'username': user_id.lower()})
+        
         if user_data:
             message_count = len(user_data.get('messages', []))
             quotes_count = len(user_data.get('quotes', []))
-            recent_messages = await self.get_historical_chat_data(user_id, limit=5)
+            recent_messages = await self.fetch_recent_messages(user_id, limit=5)
             summary = f"User has sent {message_count} messages and has {quotes_count} quotes. "
             if recent_messages:
                 recent_topics = []
@@ -196,7 +219,15 @@ class UserDataManager:
                     recent_topics.append(' '.join(words))
                 summary += f"Recent topics: {', '.join(recent_topics)}"
             return summary
+        elif channel_name.lower() == 'volictv':
+            return "VolicTV is the awesome broadcaster of this channel. Known for their incredible (or not so incredible?) Valorant skills and witty commentary."
         return "No chat history available for this user."
+
+    async def fetch_recent_messages(self, user_id, limit=5):
+        user_data = await self.users_collection.find_one({'_id': user_id})
+        if user_data and 'messages' in user_data:
+            return user_data['messages'][-limit:]
+        return []
 
     async def get_historical_chat_data(self, user_id, limit=10):
         user_data = await self.users_collection.find_one({'_id': user_id})
@@ -342,3 +373,4 @@ class UserDataManager:
                 return await self.users_collection.find_one({"_id": user_id})
         
         return None
+

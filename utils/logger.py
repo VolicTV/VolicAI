@@ -24,4 +24,3 @@ if not os.path.exists('logs'):
 bot_logger = setup_logger('bot', 'logs/bot.log')
 command_logger = setup_logger('commands', 'logs/commands.log')
 api_logger = setup_logger('api', 'logs/api.log')
-

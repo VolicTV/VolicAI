@@ -17,6 +17,9 @@ from utils import bot_logger
 import sys
 import logging
 import io
+from utils.logger import bot_logger
+from api.valorant_manager import ValorantManager
+from commands.valorant_commands import ValorantCommands
 
 # Set up logging with UTF-8 encoding
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -36,11 +39,13 @@ class Bot(commands.Bot):
         self.ai_manager = AIManager()
         self.quotes_fetched = False
         self.compatibility_manager = CompatibilityManager(self.user_data_manager, self.ai_manager)
+        self.valorant_manager = ValorantManager(self.db)
         # Add command groups
         self.add_cog(QuoteCommands(self))
         self.add_cog(UserCommands(self))
         self.add_cog(AICommands(self))
         self.add_cog(CompatibilityCommands(self))
+        self.add_cog(ValorantCommands(self))
         
         # Explicitly register all commands
         self.register_commands()
@@ -75,7 +80,9 @@ class Bot(commands.Bot):
             print(f"- {command_name}")
 
     async def event_message(self, message):
-        bot_logger.info(f"Received message: {message.content} from {message.author.name if message.author else 'Unknown'}")
+        author_name = message.author.name if message.author else "Unknown"
+        bot_logger.info(f"Received message: {message.content} from {author_name}")
+        
         if message.echo:
             return
 
@@ -89,6 +96,7 @@ class Bot(commands.Bot):
             await self.handle_regular_message(message)
 
     async def handle_regular_message(self, message):
+        bot_logger.info(f"Handling regular message from {message.author.name}")
         await self.quote_manager.process_message(message)
         if message.author:
             await self.user_data_manager.collect_chat_data(
@@ -139,6 +147,16 @@ class Bot(commands.Bot):
         # In a real implementation, you'd use Twitch API to get the user's ID
         # For now, we'll return a simple object with the cleaned name
         return SimpleUser(clean_name, clean_name.lower())
+
+    async def background_update_task(self):
+        while True:
+            await self.update_local_data()
+            await asyncio.sleep(300)  # Run every 5 minutes
+
+    async def update_local_data(self):
+        # Update frequently accessed data
+        await self.quote_manager.update_quote_cache()
+        await self.user_data_manager.update_user_cache()
 
 class SimpleUser:
     def __init__(self, name, id):

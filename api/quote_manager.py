@@ -7,6 +7,7 @@ import config
 import logging
 from pymongo.errors import DuplicateKeyError
 from bson.int64 import Int64
+import backoff
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,26 +20,19 @@ class QuoteManager:
         self.quotes_collection = self.db['quotes']
         self.quote_received = asyncio.Event()
         self.current_quote = None
+        self.quote_cache = {}
 
     async def add_quote(self, quote_id: str, text: str, author: str):
         new_quote = {"_id": quote_id, "text": text, "author": author, "channel": self.channel_name}
+        # Update local cache first
+        self.quote_cache[quote_id] = new_quote
+        # Then update the database
         try:
-            # Start a session for the transaction
-            async with await self.client.start_session() as session:
-                async with session.start_transaction():
-                    # Insert the new quote
-                    await self.quotes_collection.insert_one(new_quote, session=session)
-                    
-                    # Update the user's quotes
-                    await self.update_user_quote(quote_id, author, session=session)
-                    
-            logging.info(f"Successfully added quote {quote_id} and updated user {author}")
+            await self.quotes_collection.insert_one(new_quote)
             return True
         except DuplicateKeyError:
-            logging.warning(f"Quote with ID {quote_id} already exists. Skipping insertion.")
-            return False
-        except Exception as e:
-            logging.error(f"Error adding quote {quote_id}: {str(e)}")
+            # If insert fails, remove from local cache
+            del self.quote_cache[quote_id]
             return False
 
     async def get_random_quote(self):
@@ -184,3 +178,6 @@ class QuoteManager:
         unique_authors = await self.quotes_collection.distinct("author", {"channel": self.channel_name})
         avg_quotes = total_quotes / len(unique_authors) if unique_authors else 0
         return total_quotes, avg_quotes
+
+
+
