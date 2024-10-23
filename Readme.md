@@ -1,21 +1,52 @@
 # Twitch Quote Bot
 
-A Twitch bot for managing and retrieving quotes using TwitchIO.
+A versatile Twitch bot for managing quotes, user interactions, and providing AI-powered responses using TwitchIO and OpenAI's GPT-3.5.
+
+## Features
+
+- Quote management (add, retrieve, search, count)
+- User data collection and analysis
+- AI-powered responses and interactions
+- Compatibility matching between users
+- Valorant player statistics tracking
+- Moderation tools (ignore/unignore users)
 
 ## Project Structure
+
 ```
 twitch_bot/
 │
-├── bot.py # Main bot script
-├── config.py # Configuration file for API keys and settings
-├── requirements.txt # List of dependencies
+├── bot.py                 # Main bot script
+├── config.py              # Configuration file for API keys and settings
+├── requirements.txt       # List of dependencies
 │
-├── api/ # Directory for API-related functions
-│ ├── init.py
-│ ├── quote_manager.py # Quote management functions
-│ └── stream_elements.py # Stream Elements API interaction (if needed)
+├── api/                   # API-related functions
+│   ├── __init__.py
+│   ├── ai_manager.py      # AI response generation
+│   ├── compatibility_manager.py # User compatibility matching
+│   ├── quote_manager.py   # Quote management functions
+│   ├── twitch_api.py      # Twitch API interactions
+│   └── valorant_manager.py # Valorant stats tracking
 │
-└── fetch_all_quotes.py # Script to fetch all quotes from Stream Elements
+├── commands/              # Bot commands
+│   ├── __init__.py
+│   ├── ai_commands.py     # AI-related commands
+│   ├── compatibility_commands.py # Compatibility commands
+│   ├── quote_commands.py  # Quote-related commands
+│   ├── user_commands.py   # User-related commands
+│   └── valorant_commands.py # Valorant-related commands
+│
+├── User/                  # User data management
+│   └── user_data_manager.py
+│
+├── utils/                 # Utility functions
+│   ├── __init__.py
+│   └── logger.py          # Logging configuration
+│
+└── SingleScripts/         # Standalone scripts
+    ├── fetch_all_quotes.py
+    ├── migrate_quotes.py
+    └── update_quotes_from_csv.py
 
 ```
 
@@ -29,44 +60,52 @@ twitch_bot/
 
 ## Setup Instructions
 
-1. **Set Up Your Environment**
-   - Ensure Python 3.7 or higher is installed on your machine.
-   - Create a virtual environment for the project:
+1. **Clone the Repository**
+   ```
+   git clone https://github.com/your-username/twitch-quote-bot.git
+   cd twitch-quote-bot
+   ```
+
+2. **Set Up Your Environment**
+   - Ensure Python 3.7 or higher is installed.
+   - Create and activate a virtual environment:
      ```
      python -m venv venv
      source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
      ```
 
-2. **Install Dependencies**
-   - Install required packages:
-     ```
-     pip install -r requirements.txt
-     ```
+3. **Install Dependencies**
+   ```
+   pip install -r requirements.txt
+   ```
 
-3. **Configuration**
-   - Create a `config.py` file with your Twitch API credentials, bot token, and channel name.
-
-4. **Fetching Quotes**
-   - Run the fetch_all_quotes.py script to populate your initial quotes database:
-     ```
-     python fetch_all_quotes.py
-     ```
-
-5. **Running the Bot**
-   - Execute the main script:
-     ```
-     python bot.py
+4. **Configuration**
+   - Create a `config.py` file with your API credentials and settings:
+     ```python
+     TWITCH_OAUTH_TOKEN = 'your_oauth_token'
+     TWITCH_CLIENT_ID = 'your_client_id'
+     TWITCH_CLIENT_SECRET = 'your_client_secret'
+     TWITCH_CHANNEL = 'your_channel_name'
+     OPENAI_API_KEY = 'your_openai_api_key'
+     MONGO_URI = 'your_mongodb_connection_string'
      ```
 
-## Available Commands
+5. **Database Setup**
+   - Ensure MongoDB is installed and running.
+   - The bot will automatically create necessary collections.
 
-- `!quote`: Retrieves a random quote.
-- `!quoteid <id>`: Retrieves a specific quote by its ID.
-- `!quotesearch <term>`: Searches for quotes containing the specified term.
+6. **Running the Bot**
+   ```
+   python bot.py
+   ```
 
-## Adding New Commands
+## Usage
 
-To add new commands, modify the `Bot` class in `bot.py`. Use the `@commands.command()` decorator to define new command methods.
+- **Quotes**: `!quote`, `!quotesearch <term>`, `!quotecount`, `!lastquote`
+- **AI Interactions**: `!airesponse <prompt>`, `!roast <username>`
+- **User Compatibility**: `!compatibility <user1> <user2>`
+- **Valorant Stats**: `!setriotid <riot_id>`, `!valorantstats`
+- **Moderation**: `!ignore <username>`, `!unignore <username>`, `!ignorelist`
 
 ## Contributing
 
