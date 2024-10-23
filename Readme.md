@@ -1,6 +1,6 @@
-# Twitch Quote Bot
+# VolicAI
 
-A versatile Twitch bot for managing quotes, user interactions, and providing AI-powered responses using TwitchIO and OpenAI's GPT-3.5.
+An advanced AI-powered Twitch bot designed specifically for VolicTV's channel. VolicAI manages quotes, provides AI-driven interactions, tracks Valorant stats, and enhances overall chat engagement using TwitchIO and OpenAI's GPT-3.5.
 
 ## Features
 
