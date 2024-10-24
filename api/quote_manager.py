@@ -86,6 +86,7 @@ class QuoteManager:
                     if success:
                         quotes_added += 1
                         print(f"Added quote {quote_id} to database.")
+                        await self.update_user_quote(quote_id, self.current_quote['author'])
                     else:
                         print(f"Failed to add quote {quote_id} to database.")
                 else:
@@ -103,11 +104,12 @@ class QuoteManager:
         print(f"Finished checking for new quotes. Added {quotes_added} new quotes.")
 
     async def parse_quote_response(self, message):
-        pattern = r'@\w+, #(\d+): @(\w+): "(.*)"'
+        # Updated pattern to handle quotes not being enclosed in quotes
+        pattern = r'@\w+, #(\d+): @(\w+): (.*)'
         match = re.match(pattern, message)
         if match:
             quote_id, author, text = match.groups()
-            return {"text": text, "author": author, "id": quote_id}
+            return {"text": text.strip(), "author": author.strip(), "id": quote_id}
         return None
 
     async def process_message(self, message: twitchio.Message):
@@ -127,6 +129,12 @@ class QuoteManager:
             {"$addToSet": {"quotes": quote_id}},
             upsert=True,
             session=session
+        )
+        # Also update the user's document in the users collection
+        await self.bot.user_data_manager.users_collection.update_one(
+            {"username": author.lstrip('@').lower()},
+            {"$addToSet": {"quotes": quote_id}},
+            upsert=True
         )
 
     async def count_quotes_by_author(self, author: str):
@@ -178,6 +186,7 @@ class QuoteManager:
         unique_authors = await self.quotes_collection.distinct("author", {"channel": self.channel_name})
         avg_quotes = total_quotes / len(unique_authors) if unique_authors else 0
         return total_quotes, avg_quotes
+
 
 
 

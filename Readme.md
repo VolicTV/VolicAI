@@ -1,15 +1,15 @@
 # VolicAI
 
-An advanced AI-powered Twitch bot designed specifically for VolicTV's channel. VolicAI manages quotes, provides AI-driven interactions, tracks Valorant stats, and enhances overall chat engagement using TwitchIO and OpenAI's GPT-3.5.
+VolicAI is a Twitch bot designed to enhance your streaming experience with a variety of interactive features. This bot is built using the TwitchIO library and integrates with several APIs to provide a rich set of functionalities.
 
 ## Features
 
-- Quote management (add, retrieve, search, count)
-- User data collection and analysis
-- AI-powered responses and interactions
-- Compatibility matching between users
-- Valorant player statistics tracking
-- Moderation tools (ignore/unignore users)
+- **Quote Management**: Add, remove, and display quotes from your Twitch chat.
+- **User Data Management**: Collect and manage user data, including chat history and user summaries.
+- **AI-Powered Responses**: Generate witty responses to chat messages using AI.
+- **Compatibility Analysis**: Analyze user compatibility based on chat interactions.
+- **Valorant Integration**: Fetch and display Valorant game data.
+- **Custom Commands**: Easily add and manage custom commands for your chat.
 
 ## Project Structure
 
@@ -114,3 +114,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Contact
+
+For any questions or support, please contact VolicTV.

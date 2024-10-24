@@ -21,31 +21,56 @@ from utils.logger import bot_logger
 from api.valorant_manager import ValorantManager
 from commands.valorant_commands import ValorantCommands
 
-# Set up logging with UTF-8 encoding
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-bot_logger.addHandler(logging.StreamHandler(sys.stdout))
-bot_logger.handlers[0].setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+# Configure logging to use UTF-8 encoding
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+
+# Define UnicodeStreamHandler
+class UnicodeStreamHandler(logging.StreamHandler):
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            stream = io.TextIOWrapper(self.stream.buffer, encoding='utf-8', errors='ignore')
+            stream.write(msg + self.terminator)
+            stream.detach()
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+# Replace the default handler with the UnicodeStreamHandler
+logging.getLogger().handlers = [UnicodeStreamHandler(sys.stdout)]
 
 class Bot(commands.Bot):
 
     def __init__(self):
         super().__init__(token=config.TWITCH_OAUTH_TOKEN, prefix='!', initial_channels=[config.TWITCH_CHANNEL])
+        
+        # Initialize the database client and database first
         self.mongo_client = AsyncIOMotorClient(config.MONGO_URI)
         self.db = self.mongo_client['twitch_bot_db']
+        
+        # Initialize ValorantManager with the db
+        self.valorant_manager = ValorantManager(self.db)
+        
+        # Initialize AIManager with the valorant_manager
+        self.ai_manager = AIManager(self.valorant_manager)
+        
         self.quote_manager = QuoteManager(config.TWITCH_CHANNEL)
-        self.user_data_manager = UserDataManager(self.db)
+        self.user_data_manager = UserDataManager(self.db, config.IGNORED_USERS_FILE)
         self.processed_users = set()
         self.bot_messages = set()  # To keep track of messages sent by the bot
-        self.ai_manager = AIManager()
         self.quotes_fetched = False
         self.compatibility_manager = CompatibilityManager(self.user_data_manager, self.ai_manager)
-        self.valorant_manager = ValorantManager(self.db)
+        
         # Add command groups
         self.add_cog(QuoteCommands(self))
         self.add_cog(UserCommands(self))
         self.add_cog(AICommands(self))
         self.add_cog(CompatibilityCommands(self))
-        self.add_cog(ValorantCommands(self))
+        self.add_cog(ValorantCommands(self))  # Pass the bot instance if needed
         
         # Explicitly register all commands
         self.register_commands()
@@ -74,15 +99,18 @@ class Bot(commands.Bot):
             await self.fetch_new_quotes()
             self.quotes_fetched = True
 
-
-        print("All registered commands:")
-        for command_name in self.commands:
-            print(f"- {command_name}")
-
     async def event_message(self, message):
+        if message.author is None:
+            bot_logger.warning("Received a message with no author.")
+            return
+
         author_name = message.author.name if message.author else "Unknown"
         bot_logger.info(f"Received message: {message.content} from {author_name}")
-        
+
+        await self.user_data_manager.collect_chat_data(
+            message.author.id, message.author.name, message.content, message.timestamp
+        )
+
         if message.echo:
             return
 
@@ -91,7 +119,7 @@ class Bot(commands.Bot):
             try:
                 await self.invoke(ctx)
             except commands.CommandNotFound:
-                bot_logger.warning(f"Command not found: {ctx.message.content}")
+                pass
         else:
             await self.handle_regular_message(message)
 
@@ -109,7 +137,7 @@ class Bot(commands.Bot):
             if message.author.id not in self.processed_users:
                 await self.process_first_message(message)
             
-            if random.random() < 0.05:  # 5% chance to respond to non-command messages
+            if random.random() < 0.1:  # 5% chance to respond to non-command messages
                 context = f"Responding to a chat message: '{message.content}'"
                 response = await self.ai_manager.generate_witty_response(message.content, context)
                 await self.send_message(message.channel.name, f"@{message.author.name}, {response}")
@@ -144,9 +172,9 @@ class Bot(commands.Bot):
 
     async def get_user_by_name(self, username):
         clean_name = self.clean_username(username)
-        # In a real implementation, you'd use Twitch API to get the user's ID
-        # For now, we'll return a simple object with the cleaned name
-        return SimpleUser(clean_name, clean_name.lower())
+        # Use Twitch API to get the user's actual ID
+        user_id = await self.fetch_user_id_from_twitch_api(clean_name)
+        return clean_name, user_id
 
     async def background_update_task(self):
         while True:
@@ -158,10 +186,20 @@ class Bot(commands.Bot):
         await self.quote_manager.update_quote_cache()
         await self.user_data_manager.update_user_cache()
 
-class SimpleUser:
-    def __init__(self, name, id):
-        self.name = name
-        self.id = id
+    async def fetch_user_id_from_twitch_api(self, username):
+        url = f"https://api.twitch.tv/helix/users?login={username}"
+        headers = {
+            "Client-ID": config.TWITCH_CLIENT_ID,
+            "Authorization": f"Bearer {await self.user_data_manager.get_or_refresh_access_token()}"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data['data']:
+                        return data['data'][0]['id']
+                print(f"Failed to get user ID for {username}. Status: {response.status}")
+        return None
 
 if __name__ == "__main__":
     bot = Bot()

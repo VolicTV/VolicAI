@@ -22,8 +22,8 @@ class CompatibilityManager:
         if user1.lower() == user2.lower():
             return await self.generate_self_compatibility_response(user1)
 
-        user1_summary = await self.user_data_manager.generate_user_summary(user1_obj['_id'], user1)
-        user2_summary = await self.user_data_manager.generate_user_summary(user2_obj['_id'], user2)
+        user1_summary = await self.user_data_manager.generate_user_summary(user1_obj['id'], user1_obj['name'])
+        user2_summary = await self.user_data_manager.generate_user_summary(user2_obj['id'], user2_obj['name'])
 
         compatibility_score = self.calculate_compatibility(user1_summary, user2_summary)
 
@@ -48,24 +48,25 @@ class CompatibilityManager:
         compatibility_result = await self.ai_manager.generate_response("", prompt)
         return f"💘 {compatibility_result}"
 
-async def generate_self_compatibility_response(self, username):
-    user_obj = await self.user_data_manager.get_user_by_name(username)
-    if not user_obj:
-        return f"I couldn't find user {username}. Are you sure that's the correct username?"
+    async def generate_self_compatibility_response(self, username):
+        user_obj = await self.user_data_manager.get_user_by_name(username)
+        if not user_obj:
+            return f"I couldn't find user {username}. Are you sure that's the correct username?"
 
-    user_summary = await self.user_data_manager.generate_user_summary(user_obj['_id'], username)
-    
-    prompt = f"""
-    Generate a witty and humorous response for {username} who just tried to check their self-compatibility.
-    Use their user profile to personalize the response: {user_summary}
-    The response should:
-    1. Be lighthearted and funny, but also 18+, and slightly insulting
-    2. Include references to their chat history or behavior
-    3. Suggest they might need to branch out or meet new people, or are self-centered   
-    4. Include many appropriate emoji
-    5. Be a single, concise message suitable for Twitch chat, but under 400 characters
-    6. Include a 18+ sexual innuendo if possible
-    """
-    
-    self_compatibility_response = await self.ai_manager.generate_personalized_response(user_summary, prompt)
-    return f"@{username}, {self_compatibility_response}"
+        # Use 'id' instead of '_id' if that's the key you're using
+        user_summary = await self.user_data_manager.generate_user_summary(user_obj['id'], username)
+        
+        prompt = f"""
+        Generate a witty and humorous response for {username} who just tried to check their self-compatibility.
+        Use their user profile to personalize the response: {user_summary}
+        The response should:
+        1. Be lighthearted and funny, but also 18+, and slightly insulting
+        2. Include references to their chat history or behavior
+        3. Suggest they might need to branch out or meet new people, or are self-centered   
+        4. Include many appropriate emoji
+        5. Be a single, concise message suitable for Twitch chat, but under 400 characters
+        6. Include a 18+ sexual innuendo if possible
+        """
+        
+        self_compatibility_response = await self.ai_manager.generate_personalized_response(user_summary, prompt)
+        return f"@{username}, {self_compatibility_response}"
