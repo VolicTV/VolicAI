@@ -15,7 +15,7 @@ class QuoteCommands(commands.Cog):
             await self.bot.send_message(ctx.channel.name, core_response)
             
             context = "Responding to a request for a random quote"
-            witty_response = await self.bot.ai_manager.generate_witty_response(core_response, context)
+            witty_response = await self.bot.ai_manager.generate_enhanced_personalized_response(core_response, context)
             if witty_response and witty_response != core_response:
                 await self.bot.send_message(ctx.channel.name, f"💬 {witty_response}")
         else:
@@ -23,7 +23,7 @@ class QuoteCommands(commands.Cog):
             await self.bot.send_message(ctx.channel.name, core_response)
             
             context = "No quotes available in the database"
-            witty_response = await self.bot.ai_manager.generate_witty_response(core_response, context)
+            witty_response = await self.bot.ai_manager.generate_enhanced_personalized_response(core_response, context)
             if witty_response and witty_response != core_response:
                 await self.bot.send_message(ctx.channel.name, f"💬 {witty_response}")
 
@@ -48,7 +48,7 @@ class QuoteCommands(commands.Cog):
             random_quote = random.choice(quotes)
             core_response = f"📜 Quote #{random_quote['_id']}: \"{random_quote['text']}\" - {random_quote['author']}"
             context = f"Responding to a quote search for '{search_term}'"
-            witty_response = await self.bot.ai_manager.generate_witty_response(core_response, context)
+            witty_response = await self.bot.ai_manager.generate_enhanced_personalized_response(core_response, context)
             
             # Format the response
             formatted_response = f"{core_response}\n💬 {witty_response}"
@@ -79,7 +79,7 @@ class QuoteCommands(commands.Cog):
             comparison = f"You're exactly average! The mean is {avg_quotes:.2f} quotes per user."
         
         context = f"Commenting on {author}'s quote count ({count}) compared to the average ({avg_quotes:.2f})"
-        witty_response = await self.bot.ai_manager.generate_witty_response(comparison, context)
+        witty_response = await self.bot.ai_manager.generate_enhanced_personalized_response(comparison, context)
         
         full_response = f"{core_response}\n💬 {witty_response}"
         

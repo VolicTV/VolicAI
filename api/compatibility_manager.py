@@ -13,17 +13,17 @@ class CompatibilityManager:
         return max(-100, min(100, compatibility))
 
     async def generate_compatibility_report(self, user1, user2):
-        user1_obj = await self.user_data_manager.get_user_by_name(user1)
-        user2_obj = await self.user_data_manager.get_user_by_name(user2)
+        user1_id = await self.user_data_manager.get_user_info_by_name_or_id(user1)
+        user2_id = await self.user_data_manager.get_user_info_by_name_or_id(user2)
 
-        if not user1_obj or not user2_obj:
+        if not user1_id or not user2_id:
             return "I couldn't find one of the users. Make sure both usernames are correct!"
 
         if user1.lower() == user2.lower():
             return await self.generate_self_compatibility_response(user1)
 
-        user1_summary = await self.user_data_manager.generate_user_summary(user1_obj['id'], user1_obj['name'])
-        user2_summary = await self.user_data_manager.generate_user_summary(user2_obj['id'], user2_obj['name'])
+        user1_summary = await self.user_data_manager.get_user_summary(user1_id, user1)
+        user2_summary = await self.user_data_manager.get_user_summary(user2_id, user2)
 
         compatibility_score = self.calculate_compatibility(user1_summary, user2_summary)
 
@@ -49,12 +49,11 @@ class CompatibilityManager:
         return f"💘 {compatibility_result}"
 
     async def generate_self_compatibility_response(self, username):
-        user_obj = await self.user_data_manager.get_user_by_name(username)
-        if not user_obj:
+        user_id = await self.user_data_manager.get_user_info_by_name_or_id(username)
+        if not user_id:
             return f"I couldn't find user {username}. Are you sure that's the correct username?"
 
-        # Use 'id' instead of '_id' if that's the key you're using
-        user_summary = await self.user_data_manager.generate_user_summary(user_obj['id'], username)
+        user_summary = await self.user_data_manager.get_user_summary(user_id, username)
         
         prompt = f"""
         Generate a witty and humorous response for {username} who just tried to check their self-compatibility.
@@ -68,5 +67,5 @@ class CompatibilityManager:
         6. Include a 18+ sexual innuendo if possible
         """
         
-        self_compatibility_response = await self.ai_manager.generate_personalized_response(user_summary, prompt)
+        self_compatibility_response = await self.ai_manager.generate_enhanced_personalized_response(user_summary, prompt)
         return f"@{username}, {self_compatibility_response}"
