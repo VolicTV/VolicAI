@@ -7,7 +7,8 @@ logger = logging.getLogger(__name__)
 client = OpenAI(api_key=config.OPENAI_API_KEY)
 
 class AIManager:
-    def __init__(self, valorant_manager):
+    def __init__(self, bot, valorant_manager):
+        self.bot = bot
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
         self.valorant_manager = valorant_manager
 
@@ -26,34 +27,39 @@ class AIManager:
             print(f"Error generating AI response: {e}")
             return "I'm sorry, I couldn't generate a response at this time."
 
-    async def generate_roast(self, user_summary: str, target: str) -> str:
+    async def generate_roast(self, user_data: dict, target: str) -> str:
+        # Extract all messages from user_data
+        all_messages = user_data.get('all_messages', [])
+        all_quotes = user_data.get('all_quotes', [])    
+        
+        # Join all messages into a single string, limiting to last 1000 characters if too long
+        message_history = " ".join(all_messages)
+        if len(message_history) > 1000:
+            message_history = message_history[-1000:]
 
-        has_quotes = "No quotes available" not in user_summary
-        has_messages = "No recent messages available" not in user_summary
+        prompt = f"""Generate a savage, witty roast for {target} based on their chat history:
 
-        prompt = f"""Generate a playful roast for {target} based on this user summary:
-
-            {user_summary}
+            Chat history: {message_history}
+            Quotes: {all_quotes}
 
             The roast should be:
-            1. Funny and clever, but not overly mean
-            2. Related to the user's chat history or quotes if available
+            1. Funny and clever
+            2. Related to the user's chat history or Valorant stats if available
             3. No more than 3 sentences
-            4. Suitable for Twitch chat (can include mild swearing)
+            4. Adult Friendly
             5. Include 1-2 appropriate emojis
-            6. {"Reference their chat messages or behavior" if has_messages else ""}
-            7. {"Incorporate or reference one of their quotes" if has_quotes else ""}
+            6. Reference their chat messages or behavior
+            7. If possible, incorporate or reference one of their memorable quotes
 
-            Keep it light-hearted and avoid offensive content."""
+            Keep it mean but not too personal."""
 
         try:
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are a witty AI assistant skilled in generating playful roasts based on user data, chat history and quotes."},
+                    {"role": "system", "content": "You are a mean AI assistant skilled in generating playful roasts based on user data, valorant stats, chat history and quotes."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=150
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -61,19 +67,17 @@ class AIManager:
             return f"Sorry, I couldn't come up with a roast for {target} right now."
     
     async def generate_volictv_roast(self):
-        prompt = """
-        Generate a witty and playful roast for VolicTV, the streamer and owner of this channel. 
-        The roast should be:
-        1. Funny and clever, but not overly mean
-        2. Related to streaming, gaming (especially Valorant), or being a Twitch personality
-        3. Self-deprecating, as if the bot is roasting its own creator
-        4. No more than 4 sentences
-        5. Suitable for Twitch chat (can swear)
-        6. Include many appropriate emojis
+        prompt = """Generate a savage, witty roast for VolicTV, a Valorant Twitch streamer. The roast should:
+        1. Be clever and unexpected
+        2. Reference Valorant or gaming culture
+        3. Include playful jabs at his streaming skills or gameplay
+        4. Be slightly edgy but not offensive
+        5. Include 1-2 appropriate emojis
+        6. Be no longer than 300 characters
 
-        Example: "VolicTV's Valorant skills are so bad, even his own bot could probably beat him. Maybe he should stick to debugging code instead of defusing bombs! 😂"
+        Make it memorable, funny, and tailored to a Valorant streamer!
         """
-        return await self.bot.ai_manager.generate_response("", prompt)
+        return await self.generate_enhanced_personalized_response("", prompt, context="Roasting VolicTV, the Valorant streamer")
     
     async def generate_compliment(self, user_summary, target_user):
         prompt = f"""
@@ -89,21 +93,40 @@ class AIManager:
         """
         return await self.generate_response(user_summary, prompt)
     
-    async def enhance_response(self, core_response, context):
-        prompt = f"Add a brief, witty comment to this response, but keep the original content intact: '{core_response}'. Context: {context}"
-        enhanced_response = await self.generate_response("", prompt)
-        if enhanced_response and enhanced_response != core_response:
-            return f"{core_response}\n\n {enhanced_response}"
-        return core_response
+    async def generate_enhanced_personalized_response(self, user_summary, prompt, context=""):
+        # Combine user summary, prompt, and context into a single prompt
+        full_prompt = f"""User profile: {user_summary}
 
-    async def generate_witty_response(self, core_response, context):
-        prompt = f"Generate a brief, witty comment about this: '{core_response}'. Context: {context}. Include an appropriate emoji in your response."
-        return await self.generate_response("", prompt)
+        Generate a witty, personalized response to the following prompt:
+        {prompt}
 
-    async def generate_personalized_response(self, user_summary, prompt):
-        full_prompt = f"User profile: {user_summary}\n\n{prompt}"
-        return await self.generate_response("", full_prompt)
-    
+        Additional context: {context}
+
+        The response should:
+        1. Be clever and unexpected
+        2. Include a touch of playful sarcasm or humor
+        3. Reference gaming or Twitch culture if relevant
+        4. Include at least one appropriate emoji
+        5. Be no longer than 400 characters
+        6. Directly address or reference information from the user's profile if applicable
+
+        Make it memorable, funny, and tailored to the user!
+        """
+
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "You are VolicTV's witty and sarcastic Twitch chatbot assistant. You love gaming, especially Valorant, and often make playful jabs at users."},
+                    {"role": "user", "content": full_prompt}
+                ],
+                max_tokens=150
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Error generating enhanced personalized response: {e}")
+            return "I'm sorry, I couldn't generate a witty response at this time."
+
     async def generate_rizz(self, user_summary, target_user):
         # Fetch Valorant pick-up lines
         valorant_pickup_lines = await self.valorant_manager.fetch_valorant_pickup_lines()

@@ -56,7 +56,7 @@ class Bot(commands.Bot):
         self.valorant_manager = ValorantManager(self.db)
         
         # Initialize AIManager with the valorant_manager
-        self.ai_manager = AIManager(self.valorant_manager)
+        self.ai_manager = AIManager(self, self.valorant_manager)
         
         self.quote_manager = QuoteManager(config.TWITCH_CHANNEL)
         self.user_data_manager = UserDataManager(self.db, config.IGNORED_USERS_FILE)
@@ -107,7 +107,7 @@ class Bot(commands.Bot):
         author_name = message.author.name if message.author else "Unknown"
         bot_logger.info(f"Received message: {message.content} from {author_name}")
 
-        await self.user_data_manager.collect_chat_data(
+        await self.user_data_manager.update_user_chat_data(
             message.author.id, message.author.name, message.content, message.timestamp
         )
 
@@ -127,7 +127,7 @@ class Bot(commands.Bot):
         bot_logger.info(f"Handling regular message from {message.author.name}")
         await self.quote_manager.process_message(message)
         if message.author:
-            await self.user_data_manager.collect_chat_data(
+            await self.user_data_manager.update_user_chat_data(
                 message.author.id,
                 message.author.name,
                 message.content,
@@ -139,7 +139,7 @@ class Bot(commands.Bot):
             
             if random.random() < 0.1:  # 5% chance to respond to non-command messages
                 context = f"Responding to a chat message: '{message.content}'"
-                response = await self.ai_manager.generate_witty_response(message.content, context)
+                response = await self.ai_manager.generate_enhanced_personalized_response(message.content, context)
                 await self.send_message(message.channel.name, f"@{message.author.name}, {response}")
 
     async def send_message(self, channel, content):
@@ -163,7 +163,7 @@ class Bot(commands.Bot):
         await self.quote_manager.fetch_new_quotes(self, max_checks=200)
 
     async def process_first_message(self, message):
-        user_summary = await self.user_data_manager.generate_user_summary(message.author.id, message.channel.name)
+        user_summary = await self.user_data_manager.get_user_summary(message.author.id, message.channel.name)
         print(f"User summary for {message.author.name}: {user_summary}")
         self.processed_users.add(message.author.id)
 
@@ -173,7 +173,7 @@ class Bot(commands.Bot):
     async def get_user_by_name(self, username):
         clean_name = self.clean_username(username)
         # Use Twitch API to get the user's actual ID
-        user_id = await self.fetch_user_id_from_twitch_api(clean_name)
+        user_id = await self.user_data_manager.get_user_info_by_name_or_id(clean_name)
         return clean_name, user_id
 
     async def background_update_task(self):
@@ -190,7 +190,7 @@ class Bot(commands.Bot):
         url = f"https://api.twitch.tv/helix/users?login={username}"
         headers = {
             "Client-ID": config.TWITCH_CLIENT_ID,
-            "Authorization": f"Bearer {await self.user_data_manager.get_or_refresh_access_token()}"
+            "Authorization": f"Bearer {await self.user_data_manager.ensure_valid_access_token()}"
         }
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:

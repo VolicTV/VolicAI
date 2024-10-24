@@ -9,7 +9,7 @@ class AICommands(commands.Cog):
     @commands.command(name='airesponse')
     async def ai_response(self, ctx: commands.Context, *, question: str = None):
         bot_logger.info(f"AI response requested by {ctx.author.name}")
-        user_summary = await self.bot.user_data_manager.generate_user_summary(ctx.author.id, ctx.channel.name)
+        user_summary = await self.bot.user_data_manager.get_user_summary(ctx.author.id, ctx.channel.name)
         bot_logger.info(f"User summary for {ctx.author.name}: {user_summary}")
         
         if "No chat history available" in user_summary:
@@ -31,7 +31,6 @@ class AICommands(commands.Cog):
 
         await self.bot.send_message(ctx.channel, f"@{ctx.author.name}, {ai_response}")
 
-
     @commands.command(name='roast')
     async def roast_command(self, ctx: commands.Context, target: str = None):
         if not target:
@@ -39,33 +38,17 @@ class AICommands(commands.Cog):
 
         target = target.lstrip('@').lower()
 
-        if target == 'volictv' or target == self.bot.nick.lower():
-            roast = await self.bot.ai_manager.generate_volictv_roast()
-        else:
-            user_name, user_id = await self.bot.get_user_by_name(target)
-            if not user_id:
-                await ctx.send(f"@{ctx.author.name}, I couldn't find the user {target}. Are you sure they exist?")
-                return
+        user_name, user_id = await self.bot.get_user_by_name(target)
+        if not user_id:
+            await ctx.send(f"@{ctx.author.name}, I couldn't find the user {target}. Are you sure they exist?")
+            return
 
-            bot_logger.info(f"Generating user summary for roast command. Target: {target}, User ID: {user_id}")
-            user_summary = await self.bot.user_data_manager.generate_user_summary(user_id, ctx.channel.name)
-            bot_logger.info(f"User summary generated for {target}: {user_summary}")
+        bot_logger.info(f"Generating roast for target: {target}, User ID: {user_id}")
+        user_data = await self.bot.user_data_manager.get_user_data(user_id)
+        bot_logger.info(f"User data retrieved for {target}")
 
-            prompt = f"""
-            Generate a witty and playful roast for {target}. 
-            The roast should be:
-            1. Funny and clever, but not overly mean
-            2. Related to their chat history or behavior from {user_summary}
-            3. No more than 500 words
-            4. Suitable for Twitch chat (can swear)
-            5. Include many appropriate emojis
-
-            Example: "Your chat history is so bland, even a bot would fall asleep reading it. Maybe spice it up with some actual content! 😂"
-            """
-            roast = await self.bot.ai_manager.generate_response(user_summary, prompt)
-
+        roast = await self.bot.ai_manager.generate_roast(user_data, target)
         await ctx.send(f"@{target}, {roast}")
-
     
     @commands.command(name='compliment')
     async def compliment_command(self, ctx: commands.Context, target_user: str = None):
@@ -81,7 +64,7 @@ class AICommands(commands.Cog):
 
         bot_logger.info(f"Compliment command requested by {ctx.author.name} for {target_user}")
 
-        user_summary = await self.bot.user_data_manager.generate_user_summary(user_id, target_user)
+        user_summary = await self.bot.user_data_manager.get_user_summary(user_id, target_user)
         bot_logger.info(f"User summary for {target_user}: {user_summary}")
 
         compliment = await self.bot.ai_manager.generate_compliment(user_summary, target_user)
@@ -105,12 +88,15 @@ class AICommands(commands.Cog):
             "!quotecount - Your quote count",
             "!airesponse - AI response",
             "!roast - Playful roast",
+            "!compliment - Get a compliment",
             "!compatibility - Check compatibility",
             "!setriotid - Set Riot ID",
             "!valorantstats - Valorant stats",
             "!valocoach - Coaching tips",
             "!rank - Check rank",
-            "!about - About the bot"
+            "!about - About the bot",
+            "!rizz - Get a rizz line",
+            "!commands - List all commands"
         ]
 
         commands_message = "📜 Commands: " + " | ".join(command_list)
@@ -130,7 +116,7 @@ class AICommands(commands.Cog):
 
         bot_logger.info(f"Rizz command requested by {ctx.author.name} for {target_user}")
 
-        user_summary = await self.bot.user_data_manager.generate_user_summary(user_id, target_user)
+        user_summary = await self.bot.user_data_manager.get_user_summary(user_id, target_user)
         bot_logger.info(f"User summary for {target_user}: {user_summary}")
 
         rizz_message = await self.bot.ai_manager.generate_rizz(user_summary, target_user)
