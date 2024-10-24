@@ -14,7 +14,7 @@ VolicAI is a Twitch bot designed to enhance your streaming experience with a var
 ## Project Structure
 
 ```
-twitch_bot/
+VolicAI/
 │
 ├── bot.py # Main bot script
 ├── config.py # Configuration file for API keys and settings
