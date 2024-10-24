@@ -99,10 +99,11 @@ twitch_bot/
 ## Usage
 
 - **Quotes**: `!quote`, `!quotesearch <term>`, `!quotecount`, `!lastquote`
-- **AI Interactions**: `!airesponse <prompt>`, `!roast <username>`
+- **AI Interactions**: `!airesponse <prompt>`, `!roast <username>`, `!compliment <username>`, `!rizz <username>`
 - **User Compatibility**: `!compatibility <user1> <user2>`
-- **Valorant Stats**: `!setriotid <riot_id>`, `!valorantstats`
+- **Valorant Stats**: `!setriotid <riot_id>`, `!valorantstats`, `!valomatch`, `!valomatches`, `!valocoach`, `!rank`
 - **Moderation**: `!ignore <username>`, `!unignore <username>`, `!ignorelist`
+- **General**: `!about`, `!commands`
 
 ## Contributing
 
