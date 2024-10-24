@@ -16,38 +16,35 @@ VolicAI is a Twitch bot designed to enhance your streaming experience with a var
 ```
 twitch_bot/
 │
-├── bot.py                 # Main bot script
-├── config.py              # Configuration file for API keys and settings
-├── requirements.txt       # List of dependencies
+├── bot.py # Main bot script
+├── config.py # Configuration file for API keys and settings
+├── requirements.txt # List of dependencies
 │
-├── api/                   # API-related functions
-│   ├── __init__.py
-│   ├── ai_manager.py      # AI response generation
-│   ├── compatibility_manager.py # User compatibility matching
-│   ├── quote_manager.py   # Quote management functions
-│   ├── twitch_api.py      # Twitch API interactions
-│   └── valorant_manager.py # Valorant stats tracking
+├── api/ # Directory for API-related functions
+│ ├── init.py
+│ ├── twitch_api.py # Functions to interact with the Twitch API
+│ ├── stream_elements.py # Functions to interact with the Stream Elements API
+│ ├── google_sheets.py # Functions to interact with the Google Sheets API
+│ ├── ai_manager.py # AI-related functions and interactions
+│ ├── compatibility_manager.py # Manage user compatibility features
+│ └── valorant_manager.py # Manage Valorant-related features
 │
-├── commands/              # Bot commands
-│   ├── __init__.py
-│   ├── ai_commands.py     # AI-related commands
-│   ├── compatibility_commands.py # Compatibility commands
-│   ├── quote_commands.py  # Quote-related commands
-│   ├── user_commands.py   # User-related commands
-│   └── valorant_commands.py # Valorant-related commands
+├── commands/ # Directory for bot commands
+│ ├── init.py
+│ ├── ai_commands.py # Commands related to AI interactions
+│ ├── compatibility_commands.py # Commands for user compatibility
+│ ├── user_commands.py # User management commands
+│ ├── valorant_commands.py # Commands for Valorant stats and interactions
+│ └── quote_commands.py # Commands for managing quotes
 │
-├── User/                  # User data management
-│   └── user_data_manager.py
+├── utils/ # Utility functions
+│ ├── init.py
+│ ├── logger.py # Logging functions for debugging
+│ └── ignored_user_manager.py # Manage ignored users
 │
-├── utils/                 # Utility functions
-│   ├── __init__.py
-│   └── logger.py          # Logging configuration
-│
-└── SingleScripts/         # Standalone scripts
-    ├── fetch_all_quotes.py
-    ├── migrate_quotes.py
-    └── update_quotes_from_csv.py
-
+└── User/ # User data management
+├── init.py
+└── user_data_manager.py # Manage user data and interactions
 ```
 
 ## Component Explanations
