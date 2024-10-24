@@ -1,135 +1,120 @@
-import csv
-import random
-from typing import List, Dict, Optional
 import asyncio
 from twitchio.ext import commands
 import re
 import twitchio
+from motor.motor_asyncio import AsyncIOMotorClient
+import config
+import logging
+from pymongo.errors import DuplicateKeyError
+from bson.int64 import Int64
+import backoff
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 
 class QuoteManager:
     def __init__(self, channel_name: str):
         self.channel_name = channel_name
-        self.csv_file = f"{channel_name}_quotes.csv"
-        self.quotes = []
-        self.load_quotes_from_csv()
+        self.client = AsyncIOMotorClient(config.MONGO_URI)
+        self.db = self.client['twitch_bot_db']
+        self.quotes_collection = self.db['quotes']
         self.quote_received = asyncio.Event()
         self.current_quote = None
+        self.quote_cache = {}
 
-    def load_quotes_from_csv(self):
+    async def add_quote(self, quote_id: str, text: str, author: str):
+        new_quote = {"_id": quote_id, "text": text, "author": author, "channel": self.channel_name}
+        # Update local cache first
+        self.quote_cache[quote_id] = new_quote
+        # Then update the database
         try:
-            with open(self.csv_file, 'r', newline='', encoding='utf-8') as file:
-                reader = csv.DictReader(file)
-                self.quotes = list(reader)
-        except FileNotFoundError:
-            self.quotes = []
+            await self.quotes_collection.insert_one(new_quote)
+            return True
+        except DuplicateKeyError:
+            # If insert fails, remove from local cache
+            del self.quote_cache[quote_id]
+            return False
 
-    def save_quotes_to_csv(self):
-        with open(self.csv_file, 'w', newline='', encoding='utf-8') as file:
-            writer = csv.DictWriter(file, fieldnames=['id', 'text', 'author'])
-            writer.writeheader()
-            writer.writerows(self.quotes)
-
-    def add_quote(self, quote_id: str, text: str, author: str):
-        new_quote = {"id": quote_id, "text": text, "author": author}
-        self.quotes.append(new_quote)
-        self.save_quotes_to_csv()
-
-    def get_random_quote(self) -> Optional[Dict[str, str]]:
-        return random.choice(self.quotes) if self.quotes else None
-
-    def get_quote_by_id(self, quote_id: str) -> Optional[Dict[str, str]]:
-        print(f"Searching for quote with ID: {quote_id}")
-        quote_id_int = int(quote_id)
-        for quote in self.quotes:
-            quote_id_in_list = int(quote['id'])
-            print(f"Comparing with quote ID: {quote_id_in_list}, type: {type(quote_id_in_list)}")
-            if quote_id_int == quote_id_in_list:
-                print(f"Found matching quote: {quote}")
-                return quote
-        print(f"No quote found with ID: {quote_id}")
+    async def get_random_quote(self):
+        cursor = self.quotes_collection.aggregate([
+            {"$match": {"channel": self.channel_name}},
+            {"$sample": {"size": 1}}
+        ])
+        async for doc in cursor:
+            return doc
         return None
 
-    def search_quotes(self, search_term: str) -> List[Dict[str, str]]:
-        search_term = search_term.lower()
-        return [q for q in self.quotes if search_term in q["text"].lower() or search_term in q["author"].lower()]
+    async def get_quote_by_id(self, quote_id: str):
+        return await self.quotes_collection.find_one({"_id": quote_id, "channel": self.channel_name})
 
-    async def fetch_new_quotes(self, bot: commands.Bot, max_checks: int = 200):
-        channel = bot.get_channel(self.channel_name)
-        last_id = max(int(quote['id']) for quote in self.quotes) if self.quotes else 0
-        current_id = last_id + 1
-        quotes_fetched = 0
+    async def search_quotes(self, search_term: str):
+        cursor = self.quotes_collection.find({
+            "channel": self.channel_name,
+            "$or": [
+                {"text": {"$regex": search_term, "$options": "i"}},
+                {"author": {"$regex": search_term, "$options": "i"}}
+            ]
+        })
+        return await cursor.to_list(length=None)
 
-        print(f"Starting to fetch new quotes from ID {current_id}")
+    async def fetch_new_quotes(self, bot, max_checks=200):
+        print("Checking for new quotes...")
+        last_id = await self.get_last_quote_number()
+        print(f"Last quote in database: ID {last_id}")
 
-        for check in range(max_checks):
-            self.quote_received.clear()
-            self.current_quote = None
-            print(f"Checking quote ID: {current_id}")
-            await channel.send(f"!quote {current_id}")
-            
+        quotes_added = 0
+        for i in range(last_id + 1, last_id + max_checks + 1):
+            quote_id = str(i)
+            existing_quote = await self.quotes_collection.find_one({"_id": quote_id, "channel": self.channel_name})
+            if existing_quote:
+                print(f"Quote {quote_id} already exists in database. Skipping.")
+                continue
+
             try:
-                await asyncio.wait_for(self.quote_received.wait(), timeout=5.0)
+                print(f"Fetching quote {quote_id}...")
+                await bot.send_message(self.channel_name, f"!quote {quote_id}")
+                
+                # Wait for the quote to be received and processed
+                try:
+                    await asyncio.wait_for(self.quote_received.wait(), timeout=10)
+                except asyncio.TimeoutError:
+                    print(f"Timeout waiting for quote {quote_id}. Moving to next quote.")
+                    continue
+                
                 if self.current_quote:
-                    self.add_quote(self.current_quote['id'], self.current_quote['text'], self.current_quote['author'])
-                    quotes_fetched += 1
-                    print(f"Added quote #{self.current_quote['id']}: {self.current_quote['text']} - {self.current_quote['author']}")
+                    success = await self.add_quote(self.current_quote['id'], self.current_quote['text'], self.current_quote['author'])
+                    if success:
+                        quotes_added += 1
+                        print(f"Added quote {quote_id} to database.")
+                        await self.update_user_quote(quote_id, self.current_quote['author'])
+                    else:
+                        print(f"Failed to add quote {quote_id} to database.")
                 else:
-                    print(f"No quote found for ID {current_id}. Stopping fetch.")
-                    break  # Stop fetching after the first "No quote found"
-            except asyncio.TimeoutError:
-                print(f"Timeout while waiting for quote {current_id}. Stopping fetch.")
-                break  # Stop fetching if there's a timeout
+                    print(f"No quote received for ID {quote_id}. Stopping fetch process.")
+                    break
 
-            current_id += 1
-            await asyncio.sleep(2)  # Delay between requests
+                # Reset for next iteration
+                self.quote_received.clear()
+                self.current_quote = None
 
-        print(f"Finished fetching quotes. Added {quotes_fetched} new quotes.")
-        self.save_quotes_to_csv()
+            except Exception as e:
+                print(f"Error fetching quote {quote_id}: {str(e)}")
+                break
 
-    def parse_quote_response(self, message: str) -> Optional[Dict[str, str]]:
-        print(f"Parsing message: {message}")
-        if "no quote found" in message.lower():
-            return None
-        
-        # Try to match various formats
-        patterns = [
-            r'@\w+, #(\d+): (?:([^:]+): )?"?(.*?)"?(?:\s*-\s*(.+))?$',
-            r'@\w+, Quote #(\d+): (.*?) - (.*)$',
-            r'@\w+, #(\d+): (.+)$'
-        ]
-        
-        for pattern in patterns:
-            match = re.match(pattern, message)
-            if match:
-                groups = match.groups()
-                if len(groups) == 4:
-                    quote_id, author, text, additional_info = groups
-                elif len(groups) == 3:
-                    quote_id, text, author = groups
-                else:
-                    quote_id, text = groups
-                    author = "Unknown"
-                
-                if not author:
-                    author = additional_info if additional_info else "Unknown"
-                
-                if author and not author.startswith('@'):
-                    author = f'@{author}'
-                
-                quote = {
-                    "id": quote_id,
-                    "text": text.strip(),
-                    "author": author.strip()
-                }
-                print(f"Successfully parsed quote: {quote}")
-                return quote
-        
-        print(f"Failed to parse quote: {message}")
+        print(f"Finished checking for new quotes. Added {quotes_added} new quotes.")
+
+    async def parse_quote_response(self, message):
+        # Updated pattern to handle quotes not being enclosed in quotes
+        pattern = r'@\w+, #(\d+): @(\w+): (.*)'
+        match = re.match(pattern, message)
+        if match:
+            quote_id, author, text = match.groups()
+            return {"text": text.strip(), "author": author.strip(), "id": quote_id}
         return None
 
     async def process_message(self, message: twitchio.Message):
         if message.author and message.author.name.lower() == 'streamelements':
-            quote = self.parse_quote_response(message.content)
+            quote = await self.parse_quote_response(message.content)
             if quote:
                 self.current_quote = quote
                 self.quote_received.set()
@@ -137,6 +122,71 @@ class QuoteManager:
                 print(f"Failed to parse quote from message: {message.content}")
                 self.quote_received.set()  # Set the event even if parsing fails
 
-    def count_quotes_by_author(self, author: str) -> int:
-        author = author.lower()
-        return sum(1 for quote in self.quotes if quote['author'].lower() == author)
+    async def update_user_quote(self, quote_id: str, author: str, session=None):
+        user_collection = self.db['users']
+        await user_collection.update_one(
+            {"username": author.lstrip('@').lower()},
+            {"$addToSet": {"quotes": quote_id}},
+            upsert=True,
+            session=session
+        )
+        # Also update the user's document in the users collection
+        await self.bot.user_data_manager.users_collection.update_one(
+            {"username": author.lstrip('@').lower()},
+            {"$addToSet": {"quotes": quote_id}},
+            upsert=True
+        )
+
+    async def count_quotes_by_author(self, author: str):
+        count = await self.quotes_collection.count_documents({
+            "channel": self.channel_name,
+            "author": author.lower()
+        })
+        return count
+
+    async def get_last_quote(self):
+        last_quote = await self.quotes_collection.find_one(
+            {"channel": self.channel_name},
+            sort=[("_id", -1)]
+        )
+        if last_quote:
+            return f"Last quote in database: ID {last_quote['_id']}, Text: '{last_quote['text'][:30]}...'"
+        else:
+            return "No quotes found in the database."
+
+    async def get_last_quote_number(self):
+        pipeline = [
+            {"$match": {"channel": self.channel_name}},
+            {"$addFields": {"numeric_id": {"$toInt": "$_id"}}},
+            {"$sort": {"numeric_id": -1}},
+            {"$limit": 1}
+        ]
+        
+        async for doc in self.quotes_collection.aggregate(pipeline):
+            last_id = int(doc['_id'])
+            print(f"Debug: Last quote found - ID: {last_id}, Text: {doc['text'][:30]}...")
+            return last_id
+        
+        print("Debug: No quotes found in the database.")
+        return 0
+
+    async def print_all_quote_ids(self):
+        pipeline = [
+            {"$match": {"channel": self.channel_name}},
+            {"$addFields": {"numeric_id": {"$toInt": "$_id"}}},
+            {"$sort": {"numeric_id": 1}}
+        ]
+        
+        print(f"All quote IDs for channel {self.channel_name}:")
+        async for doc in self.quotes_collection.aggregate(pipeline):
+            print(f"Quote ID: {doc['_id']}")
+
+    async def get_quote_statistics(self):
+        total_quotes = await self.quotes_collection.count_documents({"channel": self.channel_name})
+        unique_authors = await self.quotes_collection.distinct("author", {"channel": self.channel_name})
+        avg_quotes = total_quotes / len(unique_authors) if unique_authors else 0
+        return total_quotes, avg_quotes
+
+
+
+
