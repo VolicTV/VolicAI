@@ -58,9 +58,9 @@ twitch_bot/
 ## Setup Instructions
 
 1. **Clone the Repository**
-   ```
-   git clone https://github.com/your-username/twitch-quote-bot.git
-   cd twitch-quote-bot
+   ```bash
+   git clone https://github.com/VolicTV/VolicBot.git
+   cd VolicBot
    ```
 
 2. **Set Up Your Environment**
