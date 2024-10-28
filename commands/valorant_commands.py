@@ -10,6 +10,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 import json
 from api.ai_manager import AIManager
 from datetime import datetime
+import logging
+from valorant import Client
+from collections import Counter
 
 class ValorantCommands(commands.Cog):
     def __init__(self, bot):
@@ -62,19 +65,16 @@ class ValorantCommands(commands.Cog):
         stats = await self.bot.valorant_manager.get_player_stats(riot_id)
         if stats:
             account = stats['account']
-            mmr = stats['mmr']
-            if not account and not mmr:
-                await ctx.send(f"@{ctx.author.name}, I couldn't fetch any Valorant stats for {riot_id}. The API might be down or the Riot ID might be incorrect.")
-                return
             
-            response = f"@{ctx.author.name}, here are the Valorant stats for {riot_id}:\n"
-            response += f"Level: {account.get('account_level', 'N/A')}\n"
-            response += f"Rank: {mmr.get('currenttierpatched', 'Unranked')}\n"
-            response += f"RR: {mmr.get('ranking_in_tier', 'N/A')}\n"
-            response += f"Peak Rank: {mmr.get('highest_rank', {}).get('patched_tier', 'N/A')}"
+            response = f"@{ctx.author.name}, here's the basic Valorant info for {riot_id}:\n"
+            response += f"Name: {account.name}\n"
+            response += f"Tag: {account.tag}\n"
+            response += f"Region: {account.region}\n"
+            response += f"Account Level: {account.account_level}\n"
+            
             await ctx.send(response)
         else:
-            await ctx.send(f"@{ctx.author.name}, I couldn't fetch the Valorant stats for {riot_id}. Please check if the Riot ID is correct (format: name#tag).")
+            await ctx.send(f"@{ctx.author.name}, I couldn't fetch the Valorant stats for {riot_id}. Please check if the Riot ID is correct.")
 
     @commands.command(name='valomatch')
     async def valorant_recent_match(self, ctx: commands.Context, *, riot_id: str = None):
@@ -153,7 +153,7 @@ class ValorantCommands(commands.Cog):
                 response += f"🎮 {meta.get('mode', 'Unknown')} | "
                 response += f"👤 {stats.get('character', {}).get('name', 'Unknown')}\n"
                 response += f"📊 K/D/A: {stats.get('kills', 'N/A')}/{stats.get('deaths', 'N/A')}/{stats.get('assists', 'N/A')} | "
-                response += f"💯 Score: {stats.get('score', 'N/A')}\n"
+                response += f" Score: {stats.get('score', 'N/A')}\n"
                 
                 if meta.get('mode') == 'Deathmatch':
                     total_players = teams.get('red', 0) + teams.get('blue', 0)
@@ -182,7 +182,18 @@ class ValorantCommands(commands.Cog):
             await ctx.send(f"@{ctx.author.name}, I couldn't fetch the recent match data for {riot_id}. The API might be down or the Riot ID might be incorrect.")
 
     @commands.command(name='valocoach')
-    async def valorant_coach(self, ctx: commands.Context, num_matches: int = 5, *, riot_id: str = None):
+    async def valorant_coach(self, ctx: commands.Context, *, args: str = None):
+        num_matches = 5  # Default value
+        riot_id = None
+
+        if args:
+            parts = args.split()
+            for part in parts:
+                if part.isdigit():
+                    num_matches = int(part)
+                elif '#' in part:
+                    riot_id = part
+
         if num_matches < 1 or num_matches > 10:
             await ctx.send(f"@{ctx.author.name}, please specify a number of matches between 1 and 10.")
             return
@@ -193,13 +204,24 @@ class ValorantCommands(commands.Cog):
                 await ctx.send(f"@{ctx.author.name}, I don't have your Riot ID stored. Use !confirmupdateriotid to set it.")
                 return
 
-        analysis = await self.bot.valorant_manager.analyze_recent_matches(riot_id, num_matches)
-        if analysis:
+        stats, stats_error = await self.bot.valorant_manager.get_player_stats(riot_id)
+        matches, matches_error = await self.bot.valorant_manager.get_player_recent_matches(riot_id, num_matches)
+
+        if stats_error or matches_error:
+            error_message = stats_error or matches_error
+            await ctx.send(f"@{ctx.author.name}, {error_message}")
+            return
+
+        if stats and matches:
+            analysis = self.analyze_matches(stats, matches)
+            
             stats_message = f"📊 Stats for {riot_id} (last {num_matches} matches):\n"
             stats_message += f"K/D/A: {analysis['avg_kda'][0]:.1f}/{analysis['avg_kda'][1]:.1f}/{analysis['avg_kda'][2]:.1f} | "
             stats_message += f"Avg Score: {analysis['avg_score']:.0f} | "
-            stats_message += f"Win Rate: {analysis['win_rate']:.1f}%\n"
-            stats_message += f"Most Played: {analysis['most_played_agent']} on {analysis['most_played_map']} ({analysis['most_played_mode']})"
+            stats_message += f"Win Rate: {analysis['win_rate']:.1f}% | "
+            stats_message += f"Headshot %: {analysis['headshot_percentage']:.1f}%\n"
+            stats_message += f"Most Played: {analysis['most_played_agent']} on {analysis['most_played_map']} ({analysis['most_played_mode']})\n"
+            stats_message += f"Best Agent: {analysis['best_agent']} | Most Used Weapon: {analysis['most_used_weapon']}"
 
             await ctx.send(stats_message)
 
@@ -208,7 +230,7 @@ class ValorantCommands(commands.Cog):
             prompt += "Recent Match Details:\n"
             for i, match in enumerate(analysis['match_details'], 1):
                 prompt += f"Match {i}: {match['mode']} on {match['map']} as {match['agent']}, KDA: {match['kda']}, Score: {match['score']}, Result: {match['result']}\n"
-            prompt += "\nProvide a concise analysis of the player's performance, including strengths, weaknesses, and specific tips for improvement. Use emojis to separate different points. Keep the response under 350 characters."
+            prompt += "\nProvide a concise analysis of the player's performance, including strengths, weaknesses, and specific tips for improvement. Consider their best agent, most used weapon, and headshot percentage. Use emojis to separate different points. Keep the response under 350 characters."
 
             coach_response = await self.ai_manager.generate_response("", prompt)
             analysis_message = f"🎮 Coach's analysis:\n{coach_response}"
@@ -216,6 +238,66 @@ class ValorantCommands(commands.Cog):
             await ctx.send(analysis_message)
         else:
             await ctx.send(f"@{ctx.author.name}, I couldn't analyze the recent matches for {riot_id}. The API might be down or the Riot ID might be incorrect.")
+
+    def analyze_matches(self, stats, matches):
+        analysis = {
+            "total_matches": len(matches),
+            "modes": [],
+            "agents": [],
+            "maps": [],
+            "avg_kda": [0, 0, 0],
+            "avg_score": 0,
+            "win_rate": 0,
+            "headshot_percentage": 0,
+            "most_used_weapon": "",
+            "best_agent": "",
+            "match_details": []
+        }
+
+        for match in matches:
+            player = next((p for p in match['players']['all_players'] if p['name'] == stats['name'] and p['tag'] == stats['tag']), None)
+            if not player:
+                continue
+
+            analysis["modes"].append(match['metadata']['mode'])
+            analysis["agents"].append(player['character'])
+            analysis["maps"].append(match['metadata']['map'])
+            
+            analysis["avg_kda"][0] += player['stats']['kills']
+            analysis["avg_kda"][1] += player['stats']['deaths']
+            analysis["avg_kda"][2] += player['stats']['assists']
+            analysis["avg_score"] += player['stats']['score']
+            analysis["win_rate"] += 1 if player['team'] == match['teams'][player['team'].lower()]['has_won'] else 0
+            analysis["headshot_percentage"] += player['stats']['headshots'] / player['stats']['kills'] if player['stats']['kills'] > 0 else 0
+
+            match_detail = {
+                "mode": match['metadata']['mode'],
+                "map": match['metadata']['map'],
+                "agent": player['character'],
+                "kda": f"{player['stats']['kills']}/{player['stats']['deaths']}/{player['stats']['assists']}",
+                "score": player['stats']['score'],
+                "result": "Win" if player['team'] == match['teams'][player['team'].lower()]['has_won'] else "Loss"
+            }
+            analysis["match_details"].append(match_detail)
+
+        num_matches = len(matches)
+        if num_matches > 0:
+            analysis["avg_kda"] = [round(k / num_matches, 2) for k in analysis["avg_kda"]]
+            analysis["avg_score"] = round(analysis["avg_score"] / num_matches, 0)
+            analysis["win_rate"] = round((analysis["win_rate"] / num_matches) * 100, 2)
+            analysis["headshot_percentage"] = round((analysis["headshot_percentage"] / num_matches) * 100, 2)
+
+        analysis["most_played_mode"] = max(set(analysis["modes"]), key=analysis["modes"].count)
+        analysis["most_played_agent"] = max(set(analysis["agents"]), key=analysis["agents"].count)
+        analysis["most_played_map"] = max(set(analysis["maps"]), key=analysis["maps"].count)
+
+        weapons = [kill['killer_weapon_name'] for match in matches for kill in match.get('kills', []) if kill.get('killer_puuid') == player.get('puuid')]
+        analysis["most_used_weapon"] = max(set(weapons), key=weapons.count) if weapons else "Unknown"
+
+        agent_stats = Counter(analysis["agents"])
+        analysis["best_agent"] = max(agent_stats, key=agent_stats.get)
+
+        return analysis
 
     @commands.command(name='rank')
     async def valorant_rank(self, ctx: commands.Context, *, riot_id: str = None):
@@ -239,6 +321,17 @@ class ValorantCommands(commands.Cog):
             await ctx.send(response)
         else:
             await ctx.send(f"@{ctx.author.name}, I couldn't fetch the rank for {riot_id}. Please check if the Riot ID is correct (format: name#tag).")
+
+
+
+
+
+
+
+
+
+
+
 
 
 

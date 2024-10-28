@@ -21,11 +21,14 @@ from utils.logger import bot_logger
 from api.valorant_manager import ValorantManager
 from commands.valorant_commands import ValorantCommands
 
-# Configure logging to use UTF-8 encoding
+# Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Set to DEBUG for more detailed logs
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('bot_debug.log')  # This will also save logs to a file
+    ]
 )
 
 # Define UnicodeStreamHandler
@@ -137,7 +140,7 @@ class Bot(commands.Bot):
             if message.author.id not in self.processed_users:
                 await self.process_first_message(message)
             
-            if random.random() < 0.1:  # 5% chance to respond to non-command messages
+            if random.random() < 0.01:  # 5% chance to respond to non-command messages
                 context = f"Responding to a chat message: '{message.content}'"
                 response = await self.ai_manager.generate_enhanced_personalized_response(message.content, context)
                 await self.send_message(message.channel.name, f"@{message.author.name}, {response}")
@@ -201,6 +204,9 @@ class Bot(commands.Bot):
                 print(f"Failed to get user ID for {username}. Status: {response.status}")
         return None
 
-if __name__ == "__main__":
+def main():
     bot = Bot()
     bot.run()
+
+if __name__ == "__main__":
+    main()
