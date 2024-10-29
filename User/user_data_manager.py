@@ -9,6 +9,9 @@ from functools import lru_cache, wraps
 import time
 from datetime import datetime, timedelta
 from User.ignored_user_manager import IgnoredUserManager
+import json
+from typing import List, Dict, Optional, Any
+from utils.logger import command_logger
 
 def timed_lru_cache(seconds: int, maxsize: int = 128):
     def wrapper_cache(func):
@@ -30,13 +33,63 @@ def timed_lru_cache(seconds: int, maxsize: int = 128):
     return wrapper_cache
 
 class UserDataManager:
-    def __init__(self, users_collection, ignored_users_file):
-        self.users_collection = users_collection['users']
-        self.ignored_user_manager = IgnoredUserManager(ignored_users_file)
-        self.access_token = None
-        self.token_expiry = datetime.now()
-        self.cache = {}
-        self.cache_timeout = 300  # 5 minutes
+    def __init__(self, db, ignored_users_file='data/ignored_users.json'):
+        self.db = db
+        self.ignored_users_file = ignored_users_file
+        self.ignored_users = self.load_ignored_users()
+        self.user_cache = {}
+        self.cache = {}  # For user info cache
+        self.cache_timeout = timedelta(minutes=5)
+
+    def load_ignored_users(self) -> List[str]:
+        """Load list of ignored users from JSON file"""
+        try:
+            with open(self.ignored_users_file, 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            # Create file if it doesn't exist
+            with open(self.ignored_users_file, 'w') as f:
+                json.dump([], f)
+            return []
+        except Exception as e:
+            command_logger.error(f"Error loading ignored users: {str(e)}")
+            return []
+
+    def save_ignored_users(self):
+        """Save current list of ignored users to JSON file"""
+        try:
+            with open(self.ignored_users_file, 'w') as f:
+                json.dump(self.ignored_users, f)
+        except Exception as e:
+            command_logger.error(f"Error saving ignored users: {str(e)}")
+
+    async def get_user_profile(self, username: str) -> dict:
+        """Get a user's profile from the database"""
+        try:
+            # First check cache
+            if username in self.user_cache:
+                return self.user_cache[username]
+
+            # If not in cache, get from database
+            user_data = await self.db.users.find_one({"username": username.lower()})
+            if user_data:
+                self.user_cache[username] = user_data
+                return user_data
+            
+            # If user doesn't exist, create basic profile
+            basic_profile = {
+                "username": username.lower(),
+                "first_seen": datetime.utcnow(),
+                "messages": [],
+                "message_count": 0
+            }
+            await self.db.users.insert_one(basic_profile)
+            self.user_cache[username] = basic_profile
+            return basic_profile
+
+        except Exception as e:
+            command_logger.error(f"Error getting user profile for {username}: {str(e)}")
+            return {}
 
     def clean_username(self, username):
         return username.lstrip('@').lower()
@@ -80,21 +133,31 @@ class UserDataManager:
                 print(f"Failed to get user ID for {identifier}. Status: {response.status}")
         return None
 
-    async def get_user_info(self, user_id):
-        current_time = time.time()
-        if user_id in self.cache and current_time - self.cache[user_id]['timestamp'] < self.cache_timeout:
-            bot_logger.debug(f"Cache hit for user_id: {user_id}")
-            return self.cache[user_id]['data']
+    async def get_user_info(self, user_id: str) -> Dict[str, Any]:
+        """Get cached or fresh user info"""
+        try:
+            current_time = datetime.utcnow()
+            
+            # Check cache first
+            if user_id in self.cache:
+                cache_entry = self.cache[user_id]
+                if current_time - cache_entry['timestamp'] < self.cache_timeout:
+                    return cache_entry['data']
 
-        user_data = await self.users_collection.find_one({'_id': user_id})
-        
-        if user_data:
-            self.cache[user_id] = {'data': user_data, 'timestamp': current_time}
-            bot_logger.debug(f"User data summary for ID {user_id}: username: {user_data.get('username', 'Unknown')}, message count: {len(user_data.get('messages', []))}")
-        else:
-            bot_logger.debug(f"No user data found for user_id: {user_id}")
+            # Get fresh data
+            user_data = await self.get_user_profile(user_id)
+            
+            # Update cache
+            self.cache[user_id] = {
+                'data': user_data,
+                'timestamp': current_time
+            }
+            
+            return user_data
 
-        return user_data
+        except Exception as e:
+            command_logger.error(f"Error getting user info: {str(e)}")
+            return {}
 
     async def get_user_data(self, user_id):
         user_data = await self.get_user_info(user_id)
@@ -108,34 +171,62 @@ class UserDataManager:
             'all_quotes': [quote['text'] for quote in all_quotes]
     }
 
-    async def update_user_chat_data(self, user_id, username, message_content, timestamp):
-        if username.lstrip('@').lower() in self.ignored_user_manager.ignored_users:
-            bot_logger.info(f"Ignoring message from {username} (ID: {user_id})")
-            return
-
-        if isinstance(message_content, list):
-            message_content = ' '.join(message_content)
-
-        new_message = {
-            'content': message_content,
-            'timestamp': timestamp.isoformat()
-        }
-
-        result = await self.users_collection.update_one(
-            {'_id': user_id},
-            {
-                '$set': {'username': username.lower()},
-                '$push': {
-                    'messages': {
-                        '$each': [new_message],
-                        '$slice': -1000  # Keep only the last 1000 messages
+    async def update_user_chat_data(self, user_id: str, username: str, message: str, timestamp: datetime):
+        """Update user's chat data in the database"""
+        try:
+            update_data = {
+                "$set": {
+                    "username": username.lower(),
+                    "last_seen": timestamp
+                },
+                "$inc": {
+                    "message_count": 1
+                },
+                "$push": {
+                    "messages": {
+                        "content": message,
+                        "timestamp": timestamp
                     }
                 }
-            },
-            upsert=True
-        )
-        bot_logger.info(f"Updated user data for {username} (ID: {user_id}). Modified count: {result.modified_count}")
-        self.get_user_summary.cache_clear()
+            }
+            result = await self.db.users.update_one(
+                {"username": username.lower()},
+                update_data,
+                upsert=True
+            )
+            command_logger.info(f"Updated user data for {username} (ID: {user_id}). Modified count: {result.modified_count}")
+            
+            # Update cache
+            if username in self.user_cache:
+                del self.user_cache[username]  # Invalidate cache entry
+                
+        except Exception as e:
+            command_logger.error(f"Error updating user chat data: {str(e)}")
+
+    async def is_user_ignored(self, username: str) -> bool:
+        """Check if a user is in the ignored list"""
+        return username.lower() in [u.lower() for u in self.ignored_users]
+
+    async def add_ignored_user(self, username: str) -> bool:
+        """Add a user to the ignored list"""
+        if not await self.is_user_ignored(username):
+            self.ignored_users.append(username.lower())
+            self.save_ignored_users()
+            return True
+        return False
+
+    async def remove_ignored_user(self, username: str) -> bool:
+        """Remove a user from the ignored list"""
+        username = username.lower()
+        if username in self.ignored_users:
+            self.ignored_users.remove(username)
+            self.save_ignored_users()
+            return True
+        return False
+
+    async def get_ignored_users(self) -> List[str]:
+        """Get the list of ignored users"""
+        return self.ignored_users.copy()
 
     async def get_user_quotes(self, user_id):
         user_data = await self.users_collection.find_one({'_id': user_id})
@@ -152,38 +243,31 @@ class UserDataManager:
         return quotes
     
     @timed_lru_cache(seconds=300, maxsize=1000)
-    async def get_user_summary(self, user_id, channel_name):
-        user_data = await self.get_user_info(user_id)
-        
-        if not user_data:
-            return f"No data available for user ID: {user_id}"
+    async def get_user_summary(self, user_id: str, channel_name: str) -> Dict[str, Any]:
+        """Get a summary of user data including chat stats and Valorant info"""
+        try:
+            # Get basic user info
+            user_data = await self.get_user_profile(user_id)
+            if not user_data:
+                return {}
 
-        summary = f"User ID: {user_id}, Channel: {channel_name}\n"
-        summary += f"Username: {user_data.get('username', 'Unknown')}\n"
-        
-        messages = user_data.get('messages', [])
-        summary += f"Messages sent: {len(messages)}\n"
-        
-        recent_messages = messages[-100:]
-        if recent_messages:
-            summary += "Recent messages:\n"
-            for msg in recent_messages:
-                summary += f"- {msg['content']}\n"
-        else:
-            summary += "No recent messages available.\n"
-        
-        quotes = await self.get_user_quotes(user_id)
-        if quotes:
-            summary += f"Number of quotes: {len(quotes)}\n"
-            summary += "Recent quotes:\n"
-            for quote in quotes[:5]:
-                summary += f"- {quote['text']}\n"
-        else:
-            summary += "No quotes available.\n"
-        
-        bot_logger.debug(f"User summary: {summary}")
-        return summary
-    
+            # Calculate chat stats
+            chat_stats = {
+                "message_count": user_data.get("message_count", 0),
+                "first_seen": user_data.get("first_seen", datetime.utcnow()),
+                "last_seen": user_data.get("last_seen", datetime.utcnow())
+            }
+
+            return {
+                "username": user_data.get("username", "Unknown"),
+                "chat_stats": chat_stats,
+                "channel": channel_name
+            }
+
+        except Exception as e:
+            command_logger.error(f"Error getting user summary: {str(e)}")
+            return {}
+
     async def fetch_user_chat_history(self, user_id, channel_name, limit=1000):
         all_messages = []
         pagination = None

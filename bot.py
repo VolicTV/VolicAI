@@ -1,25 +1,29 @@
 import twitchio
 from twitchio.ext import commands
 import config
-from api.quote_manager import QuoteManager
-from User.user_data_manager import UserDataManager
-import random
-import asyncio
+import json
+import os
+import logging
+import sys
+import io
+from datetime import datetime, timedelta
 from motor.motor_asyncio import AsyncIOMotorClient
 import aiohttp
+import random
+import asyncio
+
+# Local imports
+from api.quote_manager import QuoteManager
+from User.user_data_manager import UserDataManager
 from api.ai_manager import AIManager
 from api.compatibility_manager import CompatibilityManager
 from commands.quote_commands import QuoteCommands
 from commands.user_commands import UserCommands
 from commands.ai_commands import AICommands
 from commands.compatibility_commands import CompatibilityCommands
-from utils import bot_logger
-import sys
-import logging
-import io
+from api.Valorant.valorant_manager import ValorantManager
+from commands.Valorant.valorant_commands import ValorantCommands
 from utils.logger import bot_logger
-from api.valorant_manager import ValorantManager
-from commands.valorant_commands import ValorantCommands
 
 # Configure logging
 logging.basicConfig(
@@ -49,58 +53,57 @@ logging.getLogger().handlers = [UnicodeStreamHandler(sys.stdout)]
 class Bot(commands.Bot):
 
     def __init__(self):
-        super().__init__(token=config.TWITCH_OAUTH_TOKEN, prefix='!', initial_channels=[config.TWITCH_CHANNEL])
+        # Create data directory if it doesn't exist
+        os.makedirs('data', exist_ok=True)
         
-        # Initialize the database client and database first
-        self.mongo_client = AsyncIOMotorClient(config.MONGO_URI)
-        self.db = self.mongo_client['twitch_bot_db']
+        # Initialize ignored_users.json if it doesn't exist
+        if not os.path.exists('data/ignored_users.json'):
+            with open('data/ignored_users.json', 'w') as f:
+                json.dump([], f)
         
-        # Initialize ValorantManager with the db
+        # Initialize database connection
+        self.db = AsyncIOMotorClient(config.MONGO_URI)
+        
+        # Initialize managers
+        self.quote_manager = QuoteManager(self.db)
+        self.user_data_manager = UserDataManager(
+            self.db['users'],
+            ignored_users_file='data/ignored_users.json'
+        )
         self.valorant_manager = ValorantManager(self.db)
-        
-        # Initialize AIManager with the valorant_manager
         self.ai_manager = AIManager(self, self.valorant_manager)
+        self.compatibility_manager = CompatibilityManager(
+            user_data_manager=self.user_data_manager,
+            ai_manager=self.ai_manager
+        )
         
-        self.quote_manager = QuoteManager(config.TWITCH_CHANNEL)
-        self.user_data_manager = UserDataManager(self.db, config.IGNORED_USERS_FILE)
+        # Track processed users
         self.processed_users = set()
-        self.bot_messages = set()  # To keep track of messages sent by the bot
-        self.quotes_fetched = False
-        self.compatibility_manager = CompatibilityManager(self.user_data_manager, self.ai_manager)
         
-        # Add command groups
+        # Initialize bot with Twitch credentials
+        super().__init__(
+            token=config.TMI_TOKEN,
+            prefix='!',
+            initial_channels=[config.TWITCH_CHANNEL]
+        )
+        
+        # Add commands immediately after initialization
         self.add_cog(QuoteCommands(self))
         self.add_cog(UserCommands(self))
         self.add_cog(AICommands(self))
         self.add_cog(CompatibilityCommands(self))
-        self.add_cog(ValorantCommands(self))  # Pass the bot instance if needed
-        
-        # Explicitly register all commands
-        self.register_commands()
-        
-        bot_logger.info("Bot initialized")
-
-    def register_commands(self):
-        for command in self.commands.values():
-            if command.name not in self.commands:
-                self.add_command(command)
-        bot_logger.info(f"Registered commands: {', '.join(cmd.name for cmd in self.commands.values())}")
-
-    @property
-    def prefix(self):
-        return self._prefix
+        self.add_cog(ValorantCommands(self))
 
     async def event_ready(self):
-        print(f'Logged in as | {self.nick}')
-        print(f'User id is | {self.user_id}')
+        """Called once when the bot goes online."""
+        print(f"Logged in as | {self.nick}")
+        print(f"User id is | {self.user_id}")
         
-        await self.quote_manager.print_all_quote_ids()
-        last_quote_number = await self.quote_manager.get_last_quote_number()
-        print(f"Last quote number in database: {last_quote_number}")
-        
-        if not self.quotes_fetched:
-            await self.fetch_new_quotes()
-            self.quotes_fetched = True
+        try:
+            await self.quote_manager.print_all_quote_ids()
+        except Exception as e:
+            print(f"Error printing quote IDs: {str(e)}")
+            logging.error(f"Error in event_ready: {str(e)}")
 
     async def event_message(self, message):
         if message.author is None:

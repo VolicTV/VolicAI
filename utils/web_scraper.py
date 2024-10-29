@@ -1,21 +1,21 @@
-import requests
+import aiohttp
 from bs4 import BeautifulSoup
+from typing import List
+from utils.logger import command_logger
 
-def scrape_web_data(url, table_id=None, tag=None):
-    response = requests.get(url)
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    if tag == 'h3':
-        # Extract text from all h3 tags
-        data = [h3.get_text(strip=True) for h3 in soup.find_all('h3')]
-    else:
-        # Find the table with the specified id, or default to "tablepress-426"
-        table = soup.find('table', id=table_id) if table_id else soup.find('table', id='tablepress-426')
-        
-        # Extract text from all list items within the table
-        if table:
-            data = [li.get_text(strip=True) for li in table.find_all('li')]
-        else:
-            data = []
-    
-    return data
+async def scrape_web_data(url: str, tag: str = 'h3') -> List[str]:
+    """Scrape text content from specified HTML tags on a webpage"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+                    elements = soup.find_all(tag)
+                    return [element.text.strip() for element in elements if element.text.strip()]
+                else:
+                    command_logger.error(f"Failed to fetch URL {url}. Status: {response.status}")
+                    return []
+    except Exception as e:
+        command_logger.error(f"Error scraping {url}: {str(e)}")
+        return []

@@ -8,19 +8,20 @@ import logging
 from pymongo.errors import DuplicateKeyError
 from bson.int64 import Int64
 import backoff
+from utils.logger import command_logger
+import random
+from typing import Optional
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 
 class QuoteManager:
-    def __init__(self, channel_name: str):
-        self.channel_name = channel_name
-        self.client = AsyncIOMotorClient(config.MONGO_URI)
-        self.db = self.client['twitch_bot_db']
-        self.quotes_collection = self.db['quotes']
-        self.quote_received = asyncio.Event()
-        self.current_quote = None
-        self.quote_cache = {}
+    def __init__(self, db: AsyncIOMotorClient):
+        """Initialize QuoteManager with database connection"""
+        self.db = db
+        # Access the correct database and collection
+        self.quotes_collection = self.db.twitch_bot_db.quotes  # Changed from db.quotes.quotes
 
     async def add_quote(self, quote_id: str, text: str, author: str):
         new_quote = {"_id": quote_id, "text": text, "author": author, "channel": self.channel_name}
@@ -36,13 +37,24 @@ class QuoteManager:
             return False
 
     async def get_random_quote(self):
-        cursor = self.quotes_collection.aggregate([
-            {"$match": {"channel": self.channel_name}},
-            {"$sample": {"size": 1}}
-        ])
-        async for doc in cursor:
-            return doc
-        return None
+        """Get a random quote from the database"""
+        try:
+            # Get total count of quotes for the channel
+            count = await self.quotes_collection.count_documents({"channel": config.TWITCH_CHANNEL})
+            if count == 0:
+                return None
+
+            # Get a random quote
+            random_index = random.randint(0, count - 1)
+            quote = await self.quotes_collection.find_one(
+                {"channel": config.TWITCH_CHANNEL},
+                skip=random_index
+            )
+            return quote
+
+        except Exception as e:
+            command_logger.error(f"Error getting random quote: {str(e)}")
+            return None
 
     async def get_quote_by_id(self, quote_id: str):
         return await self.quotes_collection.find_one({"_id": quote_id, "channel": self.channel_name})
@@ -103,24 +115,36 @@ class QuoteManager:
 
         print(f"Finished checking for new quotes. Added {quotes_added} new quotes.")
 
-    async def parse_quote_response(self, message):
-        # Updated pattern to handle quotes not being enclosed in quotes
-        pattern = r'@\w+, #(\d+): @(\w+): (.*)'
-        match = re.match(pattern, message)
-        if match:
-            quote_id, author, text = match.groups()
-            return {"text": text.strip(), "author": author.strip(), "id": quote_id}
-        return None
+    async def parse_quote_response(self, message: str) -> Optional[dict]:
+        """Parse a quote from a StreamElements message"""
+        try:
+            # Example format: "Quote #123: This is the quote - @Author"
+            match = re.match(r'Quote #(\d+): (.*) - @(.+)', message)
+            if match:
+                quote_id, text, author = match.groups()
+                return {
+                    "_id": int(quote_id),
+                    "text": text.strip(),
+                    "author": author.strip(),
+                    "timestamp": datetime.utcnow()
+                }
+            return None
+        except Exception as e:
+            command_logger.error(f"Error parsing quote: {str(e)}")
+            return None
 
-    async def process_message(self, message: twitchio.Message):
-        if message.author and message.author.name.lower() == 'streamelements':
-            quote = await self.parse_quote_response(message.content)
-            if quote:
-                self.current_quote = quote
-                self.quote_received.set()
-            else:
-                print(f"Failed to parse quote from message: {message.content}")
-                self.quote_received.set()  # Set the event even if parsing fails
+    async def process_message(self, message):
+        """Process a message for potential quotes"""
+        try:
+            if message.author and message.author.name.lower() == 'streamelements':
+                quote = await self.parse_quote_response(message.content)
+                if quote:
+                    await self.save_quote(quote)
+                    command_logger.info(f"Saved quote: {quote}")
+                else:
+                    command_logger.info(f"Failed to parse quote from message: {message.content}")
+        except Exception as e:
+            command_logger.error(f"Error processing message for quotes: {str(e)}")
 
     async def update_user_quote(self, quote_id: str, author: str, session=None):
         user_collection = self.db['users']
@@ -171,21 +195,37 @@ class QuoteManager:
         return 0
 
     async def print_all_quote_ids(self):
-        pipeline = [
-            {"$match": {"channel": self.channel_name}},
-            {"$addFields": {"numeric_id": {"$toInt": "$_id"}}},
-            {"$sort": {"numeric_id": 1}}
-        ]
-        
-        print(f"All quote IDs for channel {self.channel_name}:")
-        async for doc in self.quotes_collection.aggregate(pipeline):
-            print(f"Quote ID: {doc['_id']}")
+        """Print all quote IDs for debugging"""
+        try:
+            print("Checking database connection...")
+            # Add channel filter if quotes are channel-specific
+            count = await self.quotes_collection.count_documents({"channel": config.TWITCH_CHANNEL})
+            print(f"Found {count} total quotes for channel {config.TWITCH_CHANNEL}")
+            
+            # Print first few quotes for verification
+            async for quote in self.quotes_collection.find(
+                {"channel": config.TWITCH_CHANNEL}
+            ).limit(5):
+                print(f"Quote #{quote.get('_id')}: {quote.get('text', 'No text')} - {quote.get('author', 'Unknown')}")
+                
+        except Exception as e:
+            error_msg = f"Error accessing quotes: {str(e)}"
+            command_logger.error(error_msg)
+            print(error_msg)
 
     async def get_quote_statistics(self):
         total_quotes = await self.quotes_collection.count_documents({"channel": self.channel_name})
         unique_authors = await self.quotes_collection.distinct("author", {"channel": self.channel_name})
         avg_quotes = total_quotes / len(unique_authors) if unique_authors else 0
         return total_quotes, avg_quotes
+
+    async def save_quote(self, quote: dict):
+        """Save a quote to the database"""
+        try:
+            await self.quotes_collection.insert_one(quote)
+            command_logger.info(f"Saved quote: {quote}")
+        except Exception as e:
+            command_logger.error(f"Error saving quote: {str(e)}")
 
 
 

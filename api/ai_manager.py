@@ -2,6 +2,9 @@ from openai import OpenAI
 import config
 import logging
 import random
+from typing import Dict, Any, List
+from utils.web_scraper import scrape_web_data
+from utils.logger import command_logger
 
 logger = logging.getLogger(__name__)
 client = OpenAI(api_key=config.OPENAI_API_KEY)
@@ -11,13 +14,33 @@ class AIManager:
         self.bot = bot
         self.client = OpenAI(api_key=config.OPENAI_API_KEY)
         self.valorant_manager = valorant_manager
+        self._pickup_lines_cache = []
+        self._last_fetch_time = 0
 
     async def generate_response(self, user_summary, prompt):
         try:
+            # Get Valorant data if available
+            valorant_stats = None
+            riot_id = await self.valorant_manager.get_riot_id(user_summary.get('username'))
+            if riot_id:
+                stats, _ = await self.valorant_manager.get_player_stats(riot_id)
+                if stats:
+                    valorant_stats = f"\nValorant Stats: {stats.get('rank', 'Unranked')}, {stats.get('matches_played', 0)} matches played"
+
+            # Update system prompt with Valorant data
+            system_prompt = (
+                f"You are VolicTV's witty and sarcastic Twitch chatbot assistant. "
+                f"You love gaming, especially Valorant, and often make playful jabs at VolicTV, "
+                f"or anyone who is a moderator in the chat. Keep responses under 400 characters. "
+                f"Here's a summary of the user you're talking to:\n{user_summary}"
+            )
+            if valorant_stats:
+                system_prompt += valorant_stats
+
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": f"You are VolicTV's witty and sarcastic Twitch chatbot assistant. You love gaming, especially Valorant, and often make playful jabs at VolicTV, or anyone who is a moderator in the chat. Keep responses under 400 characters. Here's a summary of the user you're talking to:\n{user_summary}"},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=100
@@ -127,12 +150,39 @@ class AIManager:
             logger.error(f"Error generating enhanced personalized response: {e}")
             return "I'm sorry, I couldn't generate a witty response at this time."
 
+    async def fetch_valorant_pickup_lines(self) -> List[str]:
+        """Fetch Valorant-themed pickup lines from psycatgames"""
+        try:
+            url = "https://psycatgames.com/magazine/conversation-starters/valorant-pick-up-lines/"
+            lines = await scrape_web_data(url, tag='h3')
+            
+            # Add some fallback lines in case scraping fails
+            fallback_lines = [
+                "Are you Sage? Because you just revived my heart ❤️",
+                "Is your name Jett? Because you just dashed into my heart 💨",
+                "Call me Phoenix because you set my heart on fire 🔥",
+                "Are you Viper? Because you're toxic in all the right ways 💚",
+                "Must be Cypher's trap wire, because I've fallen for you 🕸️"
+            ]
+            
+            # Use scraped lines if available, otherwise use fallback
+            valorant_pickup_lines = lines if lines else fallback_lines
+            
+            # Log the fetched pick-up lines
+            command_logger.info(f"Fetched {len(valorant_pickup_lines)} Valorant pick-up lines")
+            
+            return valorant_pickup_lines
+            
+        except Exception as e:
+            command_logger.error(f"Error fetching Valorant pickup lines: {str(e)}")
+            return fallback_lines
+
     async def generate_rizz(self, user_summary, target_user):
         # Fetch Valorant pick-up lines
-        valorant_pickup_lines = await self.valorant_manager.fetch_valorant_pickup_lines()
+        valorant_pickup_lines = await self.fetch_valorant_pickup_lines()
         
         # Use a few lines as examples in the prompt
-        example_lines = "\n".join(random.sample(valorant_pickup_lines, min(15, len(valorant_pickup_lines))))
+        example_lines = "\n".join(random.sample(valorant_pickup_lines, min(5, len(valorant_pickup_lines))))
 
         prompt = f"""
         Generate a bold and cheeky one-liner for '{target_user}' that includes references to gaming culture and Valorant.
@@ -149,5 +199,36 @@ class AIManager:
         """
         return await self.generate_response(user_summary, prompt)
     
+    async def get_user_context(self, username: str) -> Dict[str, Any]:
+        """Get comprehensive user context including Valorant data"""
+        try:
+            # Get user profile
+            user = await self.bot.user_data_manager.get_user_profile(username)
+            if not user:
+                return {"username": username}  # Return basic context if no profile found
+
+            # Get Valorant data if available
+            valorant_context = {}
+            if user.get('riot_id'):
+                try:
+                    stats, _ = await self.valorant_manager.get_player_stats(user['riot_id'])
+                    if stats:
+                        valorant_context = {
+                            'rank': stats.get('rank', 'Unranked'),
+                            'matches_played': stats.get('matches_played', 0),
+                            'win_rate': stats.get('win_rate', 0),
+                            'main_agent': stats.get('most_played_agent', 'Unknown')
+                        }
+                except Exception as e:
+                    command_logger.error(f"Error getting Valorant stats: {str(e)}")
+
+            return {
+                'username': username,
+                'profile': user,
+                'valorant': valorant_context
+            }
+        except Exception as e:
+            command_logger.error(f"Error getting user context: {str(e)}")
+            return {"username": username}  # Return basic context on error
 
 
